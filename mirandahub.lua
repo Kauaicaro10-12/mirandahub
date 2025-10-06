@@ -9,7 +9,7 @@
 ----------------------------------------------------------------
 local CONFIG_DIR = 'MirandaTweenPlus'
 local CONFIG_FILE = CONFIG_DIR .. '/config.json'
-local defaultConfig = { espBest = false, espSecret = false, espBase = false }
+local defaultConfig = { espBest = false, espSecret = false, espBase = false, xRay = false }
 local currentConfig = {}
 local HttpService = game:GetService('HttpService')
 local function safeDecode(str)
@@ -550,6 +550,13 @@ espConfig.enabledBest = currentConfig.espBest
 espConfig.enabledSecret = currentConfig.espSecret
 espConfig.enabledBase = currentConfig.espBase
 espConfig.enabledPlayer = false
+
+-- Auto-inicialização do X-RAY
+if currentConfig.xRay then
+    task.delay(1.5, function()
+        startXRay()
+    end)
+end
 
 ----------------------------------------------------------------
 -- AIMBOT TEIA
@@ -1345,6 +1352,7 @@ player.CharacterRemoving:Connect(function(ch)
     pcall(function()
         removeInvulnerable(ch)
     end)
+    stopXRay()
 end)
 
 ----------------------------------------------------------------
@@ -2208,6 +2216,222 @@ btnFlyToBase.MouseButton1Click:Connect(function()
     startFlyToBase()
 end)
 
+----------------------------------------------------------------
+-- X-RAY
+----------------------------------------------------------------
+local xrayTransparency = 0.8
+local xrayActive = false
+local xrayPlotsDescAddedConn = nil
+local xrayPlotsAppearConn = nil
+
+local NAME_HINTS = {
+    'light', 'lamp', 'lantern', 'lanterna', 'luz', 'led', 'lâmpada', 'lampada',
+}
+local LIGHT_CLASS = { PointLight = true, SpotLight = true, SurfaceLight = true }
+
+-- X-RAY Helper Functions
+local xrayOriginalProps = {}
+local xrayLightBackups = {}
+
+local function xrayLower(s)
+    return s and s:lower() or ''
+end
+
+local function xrayNameHasHint(name)
+    local n = xrayLower(name)
+    for _, hint in ipairs(NAME_HINTS) do
+        if string.find(n, hint) then
+            return true
+        end
+    end
+    return false
+end
+
+local function xrayIsBasePartOfBase(obj)
+    if not obj or not obj:IsA('BasePart') then
+        return false
+    end
+    local parent = obj.Parent
+    if not parent then
+        return false
+    end
+    if parent.Name == 'Base' and parent:IsA('Model') then
+        return true
+    end
+    return false
+end
+
+local function xrayIsLampPart(obj)
+    if not obj or not obj:IsA('BasePart') then
+        return false
+    end
+    return xrayNameHasHint(obj.Name)
+end
+
+local function xrayIsLight(obj)
+    if not obj then
+        return false
+    end
+    return LIGHT_CLASS[obj.ClassName] == true
+end
+
+local function xrayTurnLightOff(lightObj)
+    if not xrayIsLight(lightObj) then
+        return
+    end
+    if xrayLightBackups[lightObj] then
+        return
+    end
+    xrayLightBackups[lightObj] = {
+        Brightness = lightObj.Brightness,
+        Enabled = lightObj.Enabled,
+    }
+    lightObj.Enabled = false
+    lightObj.Brightness = 0
+end
+
+local function xrayRestoreLight(lightObj)
+    local backup = xrayLightBackups[lightObj]
+    if not backup then
+        return
+    end
+    pcall(function()
+        lightObj.Brightness = backup.Brightness
+        lightObj.Enabled = backup.Enabled
+    end)
+    xrayLightBackups[lightObj] = nil
+end
+
+local function xrayGetPlotsFolder()
+    return Workspace:FindFirstChild('Plots')
+end
+
+local function xrayDisconnectConns()
+    if xrayPlotsDescAddedConn then
+        pcall(function()
+            xrayPlotsDescAddedConn:Disconnect()
+        end)
+        xrayPlotsDescAddedConn = nil
+    end
+    if xrayPlotsAppearConn then
+        pcall(function()
+            xrayPlotsAppearConn:Disconnect()
+        end)
+        xrayPlotsAppearConn = nil
+    end
+end
+
+local function xrayApplyObject(obj)
+    if xrayIsBasePartOfBase(obj) or xrayIsLampPart(obj) then
+        if not xrayOriginalProps[obj] then
+            xrayOriginalProps[obj] = {
+                Transparency = obj.Transparency,
+                CanCollide = obj.CanCollide,
+            }
+        end
+        obj.Transparency = xrayTransparency
+        obj.CanCollide = false
+    end
+    if xrayIsLight(obj) then
+        xrayTurnLightOff(obj)
+    end
+end
+
+local function xrayApplyToExisting()
+    local plotsFolder = xrayGetPlotsFolder()
+    if not plotsFolder then
+        return
+    end
+    for _, plot in ipairs(plotsFolder:GetChildren()) do
+        for _, desc in ipairs(plot:GetDescendants()) do
+            xrayApplyObject(desc)
+        end
+    end
+end
+
+local function xrayAttachWhenAdded(plot)
+    if not plot then
+        return
+    end
+    local conn = plot.DescendantAdded:Connect(function(obj)
+        if not xrayActive then
+            return
+        end
+        xrayApplyObject(obj)
+    end)
+    return conn
+end
+
+local function xrayEnsurePlotsAppearWatcher()
+    if xrayPlotsAppearConn then
+        return
+    end
+    local plotsFolder = xrayGetPlotsFolder()
+    if not plotsFolder then
+        return
+    end
+    xrayPlotsAppearConn = plotsFolder.ChildAdded:Connect(function(newPlot)
+        if not xrayActive then
+            return
+        end
+        task.wait(0.2)
+        for _, desc in ipairs(newPlot:GetDescendants()) do
+            xrayApplyObject(desc)
+        end
+        xrayAttachWhenAdded(newPlot)
+    end)
+end
+
+function startXRay()
+    if xrayActive then
+        return
+    end
+    xrayActive = true
+    xrayApplyToExisting()
+    local plotsFolder = xrayGetPlotsFolder()
+    if plotsFolder then
+        for _, plot in ipairs(plotsFolder:GetChildren()) do
+            xrayAttachWhenAdded(plot)
+        end
+    end
+    xrayEnsurePlotsAppearWatcher()
+end
+
+function stopXRay()
+    if not xrayActive then
+        xrayDisconnectConns()
+        for part, props in pairs(xrayOriginalProps) do
+            if part and part.Parent then
+                pcall(function()
+                    part.Transparency = props.Transparency
+                    part.CanCollide = props.CanCollide
+                end)
+            end
+        end
+        xrayOriginalProps = {}
+        for light, _ in pairs(xrayLightBackups) do
+            xrayRestoreLight(light)
+        end
+        xrayLightBackups = {}
+        return
+    end
+    xrayActive = false
+    xrayDisconnectConns()
+    for part, props in pairs(xrayOriginalProps) do
+        if part and part.Parent then
+            pcall(function()
+                part.Transparency = props.Transparency
+                part.CanCollide = props.CanCollide
+            end)
+        end
+    end
+    xrayOriginalProps = {}
+    for light, _ in pairs(xrayLightBackups) do
+        xrayRestoreLight(light)
+    end
+    xrayLightBackups = {}
+end
+
 -- Botão STEAL FLOOR (no lugar do 3RD FLOOR)
 local btnStealFloor = Instance.new('TextButton', panel)
 btnStealFloor.Size = UDim2.new(0.88, 0, 0, 30)
@@ -2231,10 +2455,39 @@ btnStealFloor.MouseButton1Click:Connect(function()
     end
 end)
 
+-- Botão X-RAY
+local xrayY = flyY + 30 + 8 + 30 + 8
+local btnXRay = Instance.new('TextButton', panel)
+btnXRay.Size = UDim2.new(0.88, 0, 0, 30)
+btnXRay.Position = UDim2.new(0.06, 0, 0, xrayY)
+btnXRay.BackgroundColor3 = Color3.fromRGB(220, 0, 60)
+btnXRay.Text = 'X-RAY'
+btnXRay.Font = Enum.Font.Arcade
+btnXRay.TextColor3 = Color3.new(1, 1, 1)
+btnXRay.TextSize = 15
+btnXRay.BorderSizePixel = 0
+Instance.new('UICorner', btnXRay).CornerRadius = UDim.new(0, 8)
+makePersistToggle(
+    btnXRay,
+    'xRay',
+    Color3.fromRGB(250, 0, 60),
+    Color3.fromRGB(220, 0, 60),
+    'X-RAY',
+    function(on)
+        if on then
+            startXRay()
+            showStatus('X-Ray ATIVADO', Color3.fromRGB(60, 255, 60))
+        else
+            stopXRay()
+            showStatus('X-Ray DESATIVADO')
+        end
+    end
+)
+
 -- Ajusta altura do painel para incluir o novo botão
 do
-    local bottom = btnStealFloor.Position.Y.Offset
-        + btnStealFloor.Size.Y.Offset
+    local bottom = btnXRay.Position.Y.Offset
+        + btnXRay.Size.Y.Offset
         + 12
     panel.Size = UDim2.new(0, 160, 0, bottom)
 end
