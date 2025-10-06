@@ -9,7 +9,7 @@
 ----------------------------------------------------------------
 local CONFIG_DIR = 'MirandaTweenPlus'
 local CONFIG_FILE = CONFIG_DIR .. '/config.json'
-local defaultConfig = { espBest = false, espSecret = false, espBase = false }
+local defaultConfig = { espBest = false, espSecret = false, espBase = false, autoLaser = false, xRay = false }
 local currentConfig = {}
 local HttpService = game:GetService('HttpService')
 local function safeDecode(str)
@@ -824,7 +824,116 @@ makeRuntimeToggle(
     end
 )
 
-local aimbotY = espPlayerY + 28 + 10
+-- AUTO LASER e X-RAY state
+local autoLaserActive = false
+local xRayActive = false
+local autoLaserConn
+local xRayConn
+
+local autoLaserY = espPlayerY + 28 + 6
+local btnAutoLaser = Instance.new('TextButton', menu)
+btnAutoLaser.Size = UDim2.new(0.9, 0, 0, 28)
+btnAutoLaser.Position = UDim2.new(0.05, 0, 0, autoLaserY)
+btnAutoLaser.BackgroundColor3 = currentConfig.autoLaser and Color3.fromRGB(250, 0, 60) or Color3.fromRGB(220, 0, 60)
+btnAutoLaser.Text = 'AUTO LASER'
+btnAutoLaser.Font = Enum.Font.Arcade
+btnAutoLaser.TextColor3 = Color3.new(1, 1, 1)
+btnAutoLaser.TextSize = 15
+btnAutoLaser.BorderSizePixel = 0
+Instance.new('UICorner', btnAutoLaser).CornerRadius = UDim.new(0, 8)
+makePersistToggle(
+    btnAutoLaser,
+    'autoLaser',
+    Color3.fromRGB(250, 0, 60),
+    Color3.fromRGB(220, 0, 60),
+    'AUTO LASER',
+    function(on)
+        autoLaserActive = on
+        if on then
+            if autoLaserConn then
+                autoLaserConn:Disconnect()
+            end
+            autoLaserConn = RunService.Heartbeat:Connect(function()
+                local char = player.Character
+                if not char then return end
+                local hrp = char:FindFirstChild('HumanoidRootPart')
+                if not hrp then return end
+                
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA('ProximityPrompt') and obj.Enabled then
+                        local action = (obj.ActionText or ''):lower()
+                        if action:find('laser') or action:find('collect') then
+                            local parent = obj.Parent
+                            if parent and parent:IsA('BasePart') then
+                                local dist = (parent.Position - hrp.Position).Magnitude
+                                if dist <= obj.MaxActivationDistance then
+                                    pcall(function()
+                                        fireproximityprompt(obj)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        else
+            if autoLaserConn then
+                autoLaserConn:Disconnect()
+                autoLaserConn = nil
+            end
+        end
+    end
+)
+
+local xRayY = autoLaserY + 28 + 6
+local btnXRay = Instance.new('TextButton', menu)
+btnXRay.Size = UDim2.new(0.9, 0, 0, 28)
+btnXRay.Position = UDim2.new(0.05, 0, 0, xRayY)
+btnXRay.BackgroundColor3 = currentConfig.xRay and Color3.fromRGB(250, 0, 60) or Color3.fromRGB(220, 0, 60)
+btnXRay.Text = 'X-RAY'
+btnXRay.Font = Enum.Font.Arcade
+btnXRay.TextColor3 = Color3.new(1, 1, 1)
+btnXRay.TextSize = 15
+btnXRay.BorderSizePixel = 0
+Instance.new('UICorner', btnXRay).CornerRadius = UDim.new(0, 8)
+makePersistToggle(
+    btnXRay,
+    'xRay',
+    Color3.fromRGB(250, 0, 60),
+    Color3.fromRGB(220, 0, 60),
+    'X-RAY',
+    function(on)
+        xRayActive = on
+        if on then
+            if xRayConn then
+                xRayConn:Disconnect()
+            end
+            xRayConn = RunService.Heartbeat:Connect(function()
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA('BasePart') then
+                        pcall(function()
+                            obj.LocalTransparencyModifier = 0.7
+                        end)
+                    end
+                end
+            end)
+        else
+            if xRayConn then
+                xRayConn:Disconnect()
+                xRayConn = nil
+            end
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj:IsA('BasePart') then
+                    pcall(function()
+                        obj.LocalTransparencyModifier = 0
+                    end)
+                end
+            end
+        end
+    end
+)
+
+local aimbotY = xRayY + 28 + 6
 local btnAimbotMain = Instance.new('TextButton', menu)
 btnAimbotMain.Size = UDim2.new(0.9, 0, 0, 28)
 btnAimbotMain.Position = UDim2.new(0.05, 0, 0, aimbotY)
@@ -874,8 +983,8 @@ btnDiscordMain.MouseButton1Click:Connect(function()
 end)
 
 do
-    local bottom = (aimbotY + 28 + 10) + 30 + 10
-    menu.Size = UDim2.new(0, 180, 0, bottom + 10)
+    local bottom = aimbotY + 28 + 8 + 28 + 18
+    menu.Size = UDim2.new(0, 180, 0, bottom)
 end
 
 ----------------------------------------------------------------
@@ -899,7 +1008,7 @@ title2.TextSize = 14
 title2.BackgroundTransparency = 1
 
 ----------------------------------------------------------------
--- DESYNC / ANTI-HIT (otimizado)
+-- DESYNC / ANTI-HIT (simplificado)
 ----------------------------------------------------------------
 local antiHitActive = false
 local clonerActive = false
@@ -907,102 +1016,12 @@ local desyncActive = false
 local cloneListenerConn
 local antiHitRunning = false
 
-local lockdownRunning = false
-local lockdownConn = nil
-
-local invHealthConns = {}
-
 local function safeDisconnectConn(conn)
     if conn and typeof(conn) == 'RBXScriptConnection' then
         pcall(function()
             conn:Disconnect()
         end)
     end
-end
-
-local function makeInvulnerable(model)
-    if not model or not model.Parent then
-        return
-    end
-    if model.SetAttribute then
-        local already = safeGetAttribute(model, 'isInvul')
-        if already then
-            return
-        end
-    end
-    local hum = model:FindFirstChildOfClass('Humanoid')
-    if not hum then
-        return
-    end
-
-    local maxHealth = 1e9
-    pcall(function()
-        hum.MaxHealth = maxHealth
-        hum.Health = maxHealth
-    end)
-
-    if invHealthConns[model] then
-        safeDisconnectConn(invHealthConns[model])
-        invHealthConns[model] = nil
-    end
-    invHealthConns[model] = hum.HealthChanged:Connect(function()
-        pcall(function()
-            if hum.Health < hum.MaxHealth then
-                hum.Health = hum.MaxHealth
-            end
-        end)
-    end)
-
-    if not model:FindFirstChildOfClass('ForceField') then
-        local ff = Instance.new('ForceField')
-        ff.Visible = false
-        ff.Parent = model
-    end
-
-    pcall(function()
-        hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
-    end)
-
-    pcall(function()
-        if model.SetAttribute then
-            model:SetAttribute('isInvul', true)
-        end
-    end)
-end
-
-local function removeInvulnerable(model)
-    if not model then
-        return
-    end
-    if invHealthConns[model] then
-        safeDisconnectConn(invHealthConns[model])
-        invHealthConns[model] = nil
-    end
-    for _, ff in ipairs(model:GetChildren()) do
-        if ff:IsA('ForceField') then
-            pcall(function()
-                ff:Destroy()
-            end)
-        end
-    end
-    local hum = model:FindFirstChildOfClass('Humanoid')
-    if hum then
-        pcall(function()
-            hum:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
-            local safeMax = 100
-            hum.MaxHealth = safeMax
-            if hum.Health > safeMax then
-                hum.Health = safeMax
-            end
-        end)
-    end
-    pcall(function()
-        if model.SetAttribute then
-            model:SetAttribute('isInvul', false)
-        end
-    end)
 end
 
 local function trySetFlag()
@@ -1033,143 +1052,6 @@ local function deactivateDesync()
     end
     desyncActive = false
     resetFlag()
-end
-
-local function performDesyncLockdown(duration, onComplete)
-    if lockdownRunning then
-        if onComplete then
-            pcall(onComplete)
-        end
-        return
-    end
-    lockdownRunning = true
-
-    local char = player.Character
-    if not char then
-        lockdownRunning = false
-        if onComplete then
-            pcall(onComplete)
-        end
-        return
-    end
-    local hrp = char:FindFirstChild('HumanoidRootPart')
-    local hum = char:FindFirstChildOfClass('Humanoid')
-    if not hrp or not hum then
-        lockdownRunning = false
-        if onComplete then
-            pcall(onComplete)
-        end
-        return
-    end
-
-    local savedWalk = hum.WalkSpeed
-    local savedJump = hum.JumpPower
-    local savedUseJumpPower = hum.UseJumpPower
-
-    hum.WalkSpeed = 0
-    hum.JumpPower = 0
-    hum.UseJumpPower = true
-    hum.PlatformStand = true
-
-    local fixedCFrame = hrp.CFrame
-
-    if lockdownConn then
-        lockdownConn:Disconnect()
-        lockdownConn = nil
-    end
-
-    local lastCFrameTime = 0
-    local CFRAME_UPDATE_INTERVAL = 0.15
-    lockdownConn = RunService.Heartbeat:Connect(function()
-        if
-            not hrp
-            or not player.Character
-            or not player.Character:FindFirstChild('HumanoidRootPart')
-        then
-            return
-        end
-        local now = tick()
-        pcall(function()
-            hrp.Velocity = Vector3.new(0, 0, 0)
-            hrp.RotVelocity = Vector3.new(0, 0, 0)
-            if (now - lastCFrameTime) >= CFRAME_UPDATE_INTERVAL then
-                hrp.CFrame = fixedCFrame
-                lastCFrameTime = now
-            end
-        end)
-    end)
-
-    local overlayGui = Instance.new('ScreenGui')
-    overlayGui.Name = 'MirandaDesyncOverlay'
-    overlayGui.ResetOnSpawn = false
-    overlayGui.Parent = playerGui
-
-    local blackFrame = Instance.new('Frame', overlayGui)
-    blackFrame.Size = UDim2.new(2, 0, 2, 0)
-    blackFrame.Position = UDim2.new(-0.5, 0, -0.5, 0)
-    blackFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    blackFrame.BackgroundTransparency = 0
-    blackFrame.ZIndex = 9999
-
-    local label = Instance.new('TextLabel', blackFrame)
-    label.Size = UDim2.new(1, 0, 0, 100)
-    label.Position = UDim2.new(0, 0, 0.45, -50)
-    label.BackgroundTransparency = 1
-    label.Text = 'Miranda Desyinc You'
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.Font = Enum.Font.Arcade
-    label.TextSize = 32
-    label.ZIndex = 10000
-
-    local barBg = Instance.new('Frame', overlayGui)
-    barBg.Size = UDim2.new(0.35, 0, 0, 6)
-    barBg.Position = UDim2.new(0.325, 0, 0.55, 0)
-    barBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    barBg.BorderSizePixel = 0
-    barBg.ZIndex = 10000
-
-    local barFill = Instance.new('Frame', barBg)
-    barFill.Size = UDim2.new(0, 0, 1, 0)
-    barFill.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-    barFill.BorderSizePixel = 0
-    barFill.ZIndex = 10001
-
-    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
-    local tweenGoal = { Size = UDim2.new(1, 0, 1, 0) }
-    local tween = TweenService:Create(barFill, tweenInfo, tweenGoal)
-    tween:Play()
-
-    task.delay(duration, function()
-        if lockdownConn then
-            lockdownConn:Disconnect()
-            lockdownConn = nil
-        end
-
-        if hum and hum.Parent then
-            pcall(function()
-                hum.WalkSpeed = savedWalk or 16
-                hum.JumpPower = savedJump or 50
-                hum.UseJumpPower = savedUseJumpPower or true
-                hum.PlatformStand = false
-            end)
-        end
-
-        pcall(function()
-            if overlayGui then
-                overlayGui:Destroy()
-            end
-        end)
-
-        playSoundOptimized('rbxassetid://144686873', 1)
-
-        notify('Desync', 'Desync Sucessfull', 4)
-        showStatus('Desync Sucessfull', Color3.fromRGB(100, 255, 120))
-
-        lockdownRunning = false
-        if onComplete then
-            pcall(onComplete)
-        end
-    end)
 end
 
 local function activateClonerDesync(callback)
@@ -1210,24 +1092,48 @@ local function activateClonerDesync(callback)
         REQuantumClonerOnTeleport:FireServer()
     end
 
+    -- Tela de carregamento simples
+    local overlayGui = Instance.new('ScreenGui')
+    overlayGui.Name = 'MirandaDesyncOverlay'
+    overlayGui.ResetOnSpawn = false
+    overlayGui.Parent = playerGui
+
+    local blackFrame = Instance.new('Frame', overlayGui)
+    blackFrame.Size = UDim2.new(2, 0, 2, 0)
+    blackFrame.Position = UDim2.new(-0.5, 0, -0.5, 0)
+    blackFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    blackFrame.BackgroundTransparency = 0
+    blackFrame.ZIndex = 9999
+
+    local label = Instance.new('TextLabel', blackFrame)
+    label.Size = UDim2.new(1, 0, 0, 100)
+    label.Position = UDim2.new(0, 0, 0.45, -50)
+    label.BackgroundTransparency = 1
+    label.Text = 'Miranda Desync You'
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.Font = Enum.Font.Arcade
+    label.TextSize = 32
+    label.ZIndex = 10000
+
     local cloneName = tostring(player.UserId) .. '_Clone'
     cloneListenerConn = Workspace.ChildAdded:Connect(function(obj)
         if obj.Name == cloneName and obj:IsA('Model') then
-            pcall(function()
-                makeInvulnerable(obj)
-            end)
-            local origChar = player.Character
-            if origChar then
-                pcall(function()
-                    makeInvulnerable(origChar)
-                end)
-            end
             if cloneListenerConn then
                 cloneListenerConn:Disconnect()
             end
             cloneListenerConn = nil
 
-            performDesyncLockdown(1.6, function()
+            task.delay(1.6, function()
+                pcall(function()
+                    if overlayGui then
+                        overlayGui:Destroy()
+                    end
+                end)
+
+                playSoundOptimized('rbxassetid://144686873', 1)
+                notify('Desync', 'Desync Sucessfull', 4)
+                showStatus('Desync Sucessfull', Color3.fromRGB(100, 255, 120))
+
                 if callback then
                     pcall(callback)
                 end
@@ -1242,7 +1148,6 @@ local function deactivateClonerDesync()
             Workspace:FindFirstChild(tostring(player.UserId) .. '_Clone')
         if existingClone then
             pcall(function()
-                removeInvulnerable(existingClone)
                 existingClone:Destroy()
             end)
         end
@@ -1252,13 +1157,8 @@ local function deactivateClonerDesync()
 
     clonerActive = false
 
-    local char = player.Character
-    if char then
-        removeInvulnerable(char)
-    end
     local clone = Workspace:FindFirstChild(tostring(player.UserId) .. '_Clone')
     if clone then
-        removeInvulnerable(clone)
         pcall(function()
             clone:Destroy()
         end)
@@ -1282,10 +1182,6 @@ local function deactivateAntiHit()
     deactivateClonerDesync()
     deactivateDesync()
     antiHitActive = false
-
-    if player.Character then
-        removeInvulnerable(player.Character)
-    end
 
     local possibleClone =
         Workspace:FindFirstChild(tostring(player.UserId) .. '_Clone')
@@ -1334,16 +1230,9 @@ player.CharacterAdded:Connect(function()
             Workspace:FindFirstChild(tostring(player.UserId) .. '_Clone')
         if clone then
             pcall(function()
-                removeInvulnerable(clone)
                 clone:Destroy()
             end)
         end
-    end)
-end)
-
-player.CharacterRemoving:Connect(function(ch)
-    pcall(function()
-        removeInvulnerable(ch)
     end)
 end)
 
@@ -1950,27 +1839,22 @@ do
 end
 
 ----------------------------------------------------------------
--- STEAL FLOOR (substitui 3RD FLOOR)
--- - Subida automática (LinearVelocity)
--- - Transparência 0.7 com backup/restauração em Decorations/AnimalPodiums
--- - Teleporta ao chão ao detectar ProximityPrompt com "steal"
--- - Reseta em morte/respawn
--- - Sem GUI extra; usa botão no painel (no lugar do 3RD FLOOR)
+-- GO TO BEST + NEW STEAL FLOOR
 ----------------------------------------------------------------
 local ProximityPromptService = game:GetService('ProximityPromptService')
 
--- Estado principal
-local sfActive = false
-local sfFloatSpeed = 24
-local sfAttachment, sfAlignPosition, sfAlignOrientation, sfLinearVelocity
+-- GO TO BEST state
+local goToBestActive = false
+local goToBestConn
+local goToBestAtt, goToBestLV
 
--- Conexões
-local sfHeartbeatConn, sfPromptConn, sfDiedConn, sfCharAddedConn
+-- NEW STEAL FLOOR state
+local stealFloorActive = false
+local stealFloorConn, stealFloorPromptConn, stealFloorDiedConn
+local stealFloorAtt, stealFloorLV
+local stealFloorOriginalProps = {}
 
--- Backup de aparência das peças
-local sfOriginalProps = {} -- [BasePart] = {Transparency=, Material=}
-
-local function sfSafeDisconnect(conn)
+local function safeDisconnectHelper(conn)
     if conn and typeof(conn) == 'RBXScriptConnection' then
         pcall(function()
             conn:Disconnect()
@@ -1978,28 +1862,116 @@ local function sfSafeDisconnect(conn)
     end
 end
 
--- Transparência com backup/restauração
-local function sfSetPlotsTransparency(active)
-    local plots = Workspace:FindFirstChild('Plots')
-    if not plots then
+-- GO TO BEST Functions
+local function goToBestFindBestPet()
+    local plotsFolder = Workspace:FindFirstChild('Plots')
+    if not plotsFolder then return nil end
+    
+    local myPlotName
+    for _, plot in ipairs(plotsFolder:GetChildren()) do
+        local plotSign = plot:FindFirstChild('PlotSign')
+        if plotSign and plotSign:FindFirstChild('YourBase') and plotSign.YourBase.Enabled then
+            myPlotName = plot.Name
+            break
+        end
+    end
+    
+    local bestPet = nil
+    local bestMps = 0
+    
+    for _, plot in ipairs(plotsFolder:GetChildren()) do
+        if plot.Name ~= myPlotName then
+            for _, desc in ipairs(getCachedDescendants(plot)) do
+                if desc:IsA('TextLabel') and desc.Name == 'Rarity' and desc.Parent and desc.Parent:FindFirstChild('DisplayName') then
+                    local genLabel = desc.Parent:FindFirstChild('Generation')
+                    if genLabel and genLabel:IsA('TextLabel') then
+                        local mps = parseMoneyPerSec(genLabel.Text)
+                        if mps > bestMps then
+                            bestMps = mps
+                            bestPet = desc.Parent.Parent
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return bestPet
+end
+
+local function goToBestEnable()
+    if goToBestActive then
+        goToBestDisable()
         return
     end
+    
+    local bestPet = goToBestFindBestPet()
+    if not bestPet then
+        showStatus('Best pet not found')
+        return
+    end
+    
+    local char = player.Character
+    local hrp = char and char:FindFirstChild('HumanoidRootPart')
+    if not hrp then return end
+    
+    goToBestActive = true
+    
+    goToBestAtt = Instance.new('Attachment')
+    goToBestAtt.Name = 'GoToBest_Attachment'
+    goToBestAtt.Parent = hrp
+    
+    goToBestLV = Instance.new('LinearVelocity')
+    goToBestLV.Attachment0 = goToBestAtt
+    goToBestLV.RelativeTo = Enum.ActuatorRelativeTo.World
+    goToBestLV.MaxForce = math.huge
+    goToBestLV.Parent = hrp
+    
+    safeDisconnectHelper(goToBestConn)
+    goToBestConn = RunService.Heartbeat:Connect(function()
+        if not goToBestActive or not goToBestLV then return end
+        if not (hrp and hrp.Parent and bestPet and bestPet.Parent) then
+            goToBestDisable()
+            return
+        end
+        
+        local targetPos = bestPet:GetPivot().Position
+        local currentPos = hrp.Position
+        local direction = (targetPos - currentPos).Unit
+        local distance = (targetPos - currentPos).Magnitude
+        
+        if distance < 5 then
+            goToBestDisable()
+            showStatus('Reached best pet!', greenOn)
+            return
+        end
+        
+        goToBestLV.VectorVelocity = direction * 25
+    end)
+end
 
+function goToBestDisable()
+    goToBestActive = false
+    if goToBestLV then pcall(function() goToBestLV:Destroy() end) goToBestLV = nil end
+    if goToBestAtt then pcall(function() goToBestAtt:Destroy() end) goToBestAtt = nil end
+    safeDisconnectHelper(goToBestConn)
+    goToBestConn = nil
+end
+
+-- NEW STEAL FLOOR Functions
+local function stealFloorSetTransparency(active)
+    local plots = Workspace:FindFirstChild('Plots')
+    if not plots then return end
+    
     if active then
-        sfOriginalProps = {}
+        stealFloorOriginalProps = {}
         for _, plot in ipairs(plots:GetChildren()) do
-            local containers = {
-                plot:FindFirstChild('Decorations'),
-                plot:FindFirstChild('AnimalPodiums'),
-            }
+            local containers = {plot:FindFirstChild('Decorations'), plot:FindFirstChild('AnimalPodiums')}
             for _, container in ipairs(containers) do
                 if container then
                     for _, obj in ipairs(container:GetDescendants()) do
                         if obj:IsA('BasePart') then
-                            sfOriginalProps[obj] = {
-                                Transparency = obj.Transparency,
-                                Material = obj.Material,
-                            }
+                            stealFloorOriginalProps[obj] = {Transparency = obj.Transparency}
                             obj.Transparency = 0.7
                         end
                     end
@@ -2007,189 +1979,116 @@ local function sfSetPlotsTransparency(active)
             end
         end
     else
-        for part, props in pairs(sfOriginalProps) do
+        for part, props in pairs(stealFloorOriginalProps) do
             if part and part.Parent then
                 part.Transparency = props.Transparency
-                part.Material = props.Material
             end
         end
-        sfOriginalProps = {}
+        stealFloorOriginalProps = {}
     end
 end
 
--- Criação/remoção de corpos de física
-local function sfDestroyBodies()
-    if sfLinearVelocity then
-        pcall(function()
-            sfLinearVelocity:Destroy()
-        end)
-    end
-    if sfAlignPosition then
-        pcall(function()
-            sfAlignPosition:Destroy()
-        end)
-    end
-    if sfAlignOrientation then
-        pcall(function()
-            sfAlignOrientation:Destroy()
-        end)
-    end
-    if sfAttachment then
-        pcall(function()
-            sfAttachment:Destroy()
-        end)
-    end
-    sfLinearVelocity, sfAlignPosition, sfAlignOrientation, sfAttachment =
-        nil, nil, nil, nil
-end
-
-local function sfCreateBodies(rootPart)
-    sfDestroyBodies()
-    if not rootPart then
-        return
-    end
-
-    sfAttachment = Instance.new('Attachment')
-    sfAttachment.Name = 'StealFloor_Attachment'
-    sfAttachment.Parent = rootPart
-
-    sfAlignPosition = Instance.new('AlignPosition')
-    sfAlignPosition.Name = 'StealFloor_AlignPosition'
-    sfAlignPosition.Attachment0 = sfAttachment
-    sfAlignPosition.Mode = Enum.PositionAlignmentMode.OneAttachment
-    sfAlignPosition.Position = rootPart.Position
-    sfAlignPosition.MaxForce = 500000
-    sfAlignPosition.Responsiveness = 200
-    sfAlignPosition.ApplyAtCenterOfMass = true
-    sfAlignPosition.ForceLimitMode = Enum.ForceLimitMode.PerAxis
-    sfAlignPosition.MaxAxesForce = Vector3.new(math.huge, 0, math.huge)
-    sfAlignPosition.Parent = rootPart
-
-    sfAlignOrientation = Instance.new('AlignOrientation')
-    sfAlignOrientation.Name = 'StealFloor_AlignOrientation'
-    sfAlignOrientation.Attachment0 = sfAttachment
-    sfAlignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-    sfAlignOrientation.CFrame = rootPart.CFrame
-    sfAlignOrientation.MaxTorque = 500000
-    sfAlignOrientation.Responsiveness = 200
-    sfAlignOrientation.Parent = rootPart
-
-    sfLinearVelocity = Instance.new('LinearVelocity')
-    sfLinearVelocity.Name = 'StealFloor_LinearVelocity'
-    sfLinearVelocity.Attachment0 = sfAttachment
-    sfLinearVelocity.MaxForce = 500000
-    sfLinearVelocity.ForceLimitMode = Enum.ForceLimitMode.PerAxis
-    sfLinearVelocity.MaxAxesForce = Vector3.new(0, math.huge, 0)
-    sfLinearVelocity.VectorVelocity = Vector3.new(0, 0, 0)
-    sfLinearVelocity.Parent = rootPart
-end
-
--- Teleportar até o chão
-local function sfDisable() end -- forward decl
-
-local function sfTeleportToGround()
+local function stealFloorTeleportToGround()
     local char = player.Character
     local rp = char and char:FindFirstChild('HumanoidRootPart')
     local hum = char and char:FindFirstChildOfClass('Humanoid')
-    if not (rp and hum and hum.Health > 0) then
-        return
-    end
-
+    if not (rp and hum and hum.Health > 0) then return end
+    
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
-    rayParams.FilterDescendantsInstances = { char }
-
-    local rayResult =
-        Workspace:Raycast(rp.Position, Vector3.new(0, -1500, 0), rayParams)
+    rayParams.FilterDescendantsInstances = {char}
+    
+    local rayResult = Workspace:Raycast(rp.Position, Vector3.new(0, -1500, 0), rayParams)
     if rayResult then
-        rp.CFrame = CFrame.new(
-            rp.Position.X,
-            rayResult.Position.Y + hum.HipHeight,
-            rp.Position.Z
-        )
-        if sfActive then
-            sfDisable() -- restaura e limpa
+        rp.CFrame = CFrame.new(rp.Position.X, rayResult.Position.Y + hum.HipHeight, rp.Position.Z)
+        if stealFloorActive then
+            stealFloorDisable()
         end
     end
 end
 
--- Habilitar/Desabilitar
-local function sfEnable()
-    if sfActive then
-        return
-    end
+local function stealFloorEnable(btn)
+    if stealFloorActive then return end
+    
     local hum = getHumanoid()
     local root = getHRP()
-    if not (hum and hum.Health > 0 and root) then
-        return
-    end
-
-    sfActive = true
-    sfCreateBodies(root)
-    sfSetPlotsTransparency(true)
-
-    -- Sobe continuamente
-    sfSafeDisconnect(sfHeartbeatConn)
-    sfHeartbeatConn = RunService.Heartbeat:Connect(function()
-        if not sfActive or not sfLinearVelocity then
-            return
-        end
+    if not (hum and hum.Health > 0 and root) then return end
+    
+    stealFloorActive = true
+    stealFloorSetTransparency(true)
+    
+    stealFloorAtt = Instance.new('Attachment')
+    stealFloorAtt.Name = 'StealFloor_Attachment'
+    stealFloorAtt.Parent = root
+    
+    stealFloorLV = Instance.new('LinearVelocity')
+    stealFloorLV.Attachment0 = stealFloorAtt
+    stealFloorLV.MaxForce = 500000
+    stealFloorLV.ForceLimitMode = Enum.ForceLimitMode.PerAxis
+    stealFloorLV.MaxAxesForce = Vector3.new(0, math.huge, 0)
+    stealFloorLV.VectorVelocity = Vector3.new(0, 24, 0)
+    stealFloorLV.Parent = root
+    
+    safeDisconnectHelper(stealFloorConn)
+    stealFloorConn = RunService.Heartbeat:Connect(function()
+        if not stealFloorActive or not stealFloorLV then return end
         local h = getHumanoid()
         if not (h and h.Health > 0) then
-            sfDisable()
+            stealFloorDisable(btn)
             return
         end
-        sfLinearVelocity.VectorVelocity = Vector3.new(0, sfFloatSpeed, 0)
+        stealFloorLV.VectorVelocity = Vector3.new(0, 24, 0)
     end)
-
-    -- Teleportar ao detectar "steal"
-    sfSafeDisconnect(sfPromptConn)
-    sfPromptConn = ProximityPromptService.PromptTriggered:Connect(
-        function(prompt, who)
-            if who == player then
-                local act = (prompt.ActionText or ''):lower()
-                if string.find(act, 'steal') then
-                    sfTeleportToGround()
+    
+    safeDisconnectHelper(stealFloorPromptConn)
+    stealFloorPromptConn = ProximityPromptService.PromptTriggered:Connect(function(prompt, who)
+        if who == player then
+            local act = (prompt.ActionText or ''):lower()
+            if string.find(act, 'steal') then
+                stealFloorTeleportToGround()
+                if btn then
+                    btn.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
                 end
             end
         end
-    )
-
-    -- Morreu: desliga e restaura
-    sfSafeDisconnect(sfDiedConn)
+    end)
+    
+    safeDisconnectHelper(stealFloorDiedConn)
     if hum then
-        sfDiedConn = hum.Died:Connect(function()
-            sfDisable()
+        stealFloorDiedConn = hum.Died:Connect(function()
+            stealFloorDisable(btn)
         end)
     end
 end
 
-function sfDisable()
-    if not sfActive then
-        -- garantir limpeza mesmo inativo
-        sfSetPlotsTransparency(false)
-        sfDestroyBodies()
-        sfSafeDisconnect(sfHeartbeatConn)
-        sfSafeDisconnect(sfPromptConn)
-        sfSafeDisconnect(sfDiedConn)
-        sfHeartbeatConn, sfPromptConn, sfDiedConn = nil, nil, nil
+function stealFloorDisable(btn)
+    if not stealFloorActive then
+        stealFloorSetTransparency(false)
+        if stealFloorLV then pcall(function() stealFloorLV:Destroy() end) end
+        if stealFloorAtt then pcall(function() stealFloorAtt:Destroy() end) end
+        safeDisconnectHelper(stealFloorConn)
+        safeDisconnectHelper(stealFloorPromptConn)
+        safeDisconnectHelper(stealFloorDiedConn)
+        stealFloorLV, stealFloorAtt, stealFloorConn, stealFloorPromptConn, stealFloorDiedConn = nil, nil, nil, nil, nil
         return
     end
-    sfActive = false
-    sfSetPlotsTransparency(false)
-    sfDestroyBodies()
-    sfSafeDisconnect(sfHeartbeatConn)
-    sfSafeDisconnect(sfPromptConn)
-    sfSafeDisconnect(sfDiedConn)
-    sfHeartbeatConn, sfPromptConn, sfDiedConn = nil, nil, nil
+    stealFloorActive = false
+    stealFloorSetTransparency(false)
+    if stealFloorLV then pcall(function() stealFloorLV:Destroy() end) stealFloorLV = nil end
+    if stealFloorAtt then pcall(function() stealFloorAtt:Destroy() end) stealFloorAtt = nil end
+    safeDisconnectHelper(stealFloorConn)
+    safeDisconnectHelper(stealFloorPromptConn)
+    safeDisconnectHelper(stealFloorDiedConn)
+    stealFloorConn, stealFloorPromptConn, stealFloorDiedConn = nil, nil, nil
+    if btn then
+        btn.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+    end
 end
 
--- Respawn: sempre restaurar
-sfSafeDisconnect(sfCharAddedConn)
-sfCharAddedConn = player.CharacterAdded:Connect(function(ch)
-    -- dá um tempo para os objetos spawnarem
+player.CharacterAdded:Connect(function()
     task.wait(0.1)
-    sfDisable()
+    stealFloorDisable(nil)
+    goToBestDisable()
 end)
 
 -- Botão FLY TO BASE (mantido no mesmo lugar)
@@ -2208,34 +2107,57 @@ btnFlyToBase.MouseButton1Click:Connect(function()
     startFlyToBase()
 end)
 
--- Botão STEAL FLOOR (no lugar do 3RD FLOOR)
-local btnStealFloor = Instance.new('TextButton', panel)
-btnStealFloor.Size = UDim2.new(0.88, 0, 0, 30)
-btnStealFloor.Position = UDim2.new(0.06, 0, 0, flyY + 30 + 8)
-btnStealFloor.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
-btnStealFloor.Text = 'STEAL FLOOR'
-btnStealFloor.Font = Enum.Font.Arcade
-btnStealFloor.TextColor3 = Color3.new(1, 1, 1)
-btnStealFloor.TextSize = 15
-btnStealFloor.BorderSizePixel = 0
-Instance.new('UICorner', btnStealFloor).CornerRadius = UDim.new(0, 8)
-btnStealFloor.MouseButton1Click:Connect(function()
-    if not sfActive then
-        sfEnable()
-        btnStealFloor.BackgroundColor3 = Color3.fromRGB(60, 200, 60)
+-- Botão GO TO BEST
+local goToBestY = flyY + 30 + 8
+local btnGoToBest = Instance.new('TextButton', panel)
+btnGoToBest.Size = UDim2.new(0.88, 0, 0, 30)
+btnGoToBest.Position = UDim2.new(0.06, 0, 0, goToBestY)
+btnGoToBest.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+btnGoToBest.Text = 'GO TO BEST'
+btnGoToBest.Font = Enum.Font.Arcade
+btnGoToBest.TextColor3 = Color3.new(1, 1, 1)
+btnGoToBest.TextSize = 14
+btnGoToBest.BorderSizePixel = 0
+Instance.new('UICorner', btnGoToBest).CornerRadius = UDim.new(0, 8)
+btnGoToBest.MouseButton1Click:Connect(function()
+    if not goToBestActive then
+        goToBestEnable()
+        btnGoToBest.BackgroundColor3 = Color3.fromRGB(60, 200, 60)
+        showStatus('Go to Best ON', Color3.fromRGB(60, 200, 60))
+    else
+        goToBestDisable()
+        btnGoToBest.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+        showStatus('Go to Best OFF')
+    end
+end)
+
+-- Botão STEAL FLOOR (NOVO)
+local stealFloorY = goToBestY + 30 + 8
+local btnStealFloorNew = Instance.new('TextButton', panel)
+btnStealFloorNew.Size = UDim2.new(0.88, 0, 0, 30)
+btnStealFloorNew.Position = UDim2.new(0.06, 0, 0, stealFloorY)
+btnStealFloorNew.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+btnStealFloorNew.Text = 'STEAL FLOOR'
+btnStealFloorNew.Font = Enum.Font.Arcade
+btnStealFloorNew.TextColor3 = Color3.new(1, 1, 1)
+btnStealFloorNew.TextSize = 15
+btnStealFloorNew.BorderSizePixel = 0
+Instance.new('UICorner', btnStealFloorNew).CornerRadius = UDim.new(0, 8)
+btnStealFloorNew.MouseButton1Click:Connect(function()
+    if not stealFloorActive then
+        stealFloorEnable(btnStealFloorNew)
+        btnStealFloorNew.BackgroundColor3 = Color3.fromRGB(60, 200, 60)
         showStatus('Steal Floor ON', Color3.fromRGB(60, 200, 60))
     else
-        sfDisable()
-        btnStealFloor.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+        stealFloorDisable(btnStealFloorNew)
+        btnStealFloorNew.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
         showStatus('Steal Floor OFF')
     end
 end)
 
--- Ajusta altura do painel para incluir o novo botão
+-- Ajusta altura do painel para incluir os novos botões
 do
-    local bottom = btnStealFloor.Position.Y.Offset
-        + btnStealFloor.Size.Y.Offset
-        + 12
+    local bottom = stealFloorY + 30 + 12
     panel.Size = UDim2.new(0, 160, 0, bottom)
 end
 
