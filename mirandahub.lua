@@ -551,6 +551,10 @@ espConfig.enabledSecret = currentConfig.espSecret
 espConfig.enabledBase = currentConfig.espBase
 espConfig.enabledPlayer = false
 
+-- Initialize autoLaser and xRay from config (will be activated after buttons are created)
+local initialAutoLaser = currentConfig.autoLaser
+local initialXRay = currentConfig.xRay
+
 ----------------------------------------------------------------
 -- AIMBOT TEIA
 ----------------------------------------------------------------
@@ -985,6 +989,57 @@ end)
 do
     local bottom = aimbotY + 28 + 8 + 28 + 18
     menu.Size = UDim2.new(0, 180, 0, bottom)
+end
+
+-- Initialize AUTO LASER and X-RAY from saved config
+if initialAutoLaser then
+    task.defer(function()
+        autoLaserActive = true
+        if autoLaserConn then
+            autoLaserConn:Disconnect()
+        end
+        autoLaserConn = RunService.Heartbeat:Connect(function()
+            local char = player.Character
+            if not char then return end
+            local hrp = char:FindFirstChild('HumanoidRootPart')
+            if not hrp then return end
+            
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj:IsA('ProximityPrompt') and obj.Enabled then
+                    local action = (obj.ActionText or ''):lower()
+                    if action:find('laser') or action:find('collect') then
+                        local parent = obj.Parent
+                        if parent and parent:IsA('BasePart') then
+                            local dist = (parent.Position - hrp.Position).Magnitude
+                            if dist <= obj.MaxActivationDistance then
+                                pcall(function()
+                                    fireproximityprompt(obj)
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+if initialXRay then
+    task.defer(function()
+        xRayActive = true
+        if xRayConn then
+            xRayConn:Disconnect()
+        end
+        xRayConn = RunService.Heartbeat:Connect(function()
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj:IsA('BasePart') then
+                    pcall(function()
+                        obj.LocalTransparencyModifier = 0.7
+                    end)
+                end
+            end
+        end)
+    end)
 end
 
 ----------------------------------------------------------------
