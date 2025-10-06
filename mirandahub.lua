@@ -72,6 +72,18 @@ local function saveConfig()
 end
 
 ----------------------------------------------------------------
+-- AUTO LASER VARIABLES
+----------------------------------------------------------------
+local LASER_CAPE_NAME = 'Laser Cape'
+local LASER_MAX_DISTANCE = 40
+local LASER_SHOOT_INTERVAL = 0.7
+local LASER_ACTION_WAIT = 0.05
+local LASER_POST_SHOT_DELAY = 0.15
+local laserRunning = false
+local laserLoopThread = nil
+local laserIsBusy = false
+
+----------------------------------------------------------------
 -- SERVICES
 ----------------------------------------------------------------
 local Players = game:GetService('Players')
@@ -556,6 +568,167 @@ local initialAutoLaser = currentConfig.autoLaser
 local initialXRay = currentConfig.xRay
 
 ----------------------------------------------------------------
+-- AUTO LASER FUNCTIONS
+----------------------------------------------------------------
+local function getEquippedNonCapeTool()
+    local char = player.Character
+    if not char then
+        return nil
+    end
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA('Tool') and child.Name ~= LASER_CAPE_NAME then
+            return child
+        end
+    end
+    return nil
+end
+
+local function reEquipPreviousTool(toolRef, toolName)
+    local hum = getHumanoid()
+    local bp = player:FindFirstChild('Backpack')
+    if not (hum and bp) then
+        return
+    end
+    
+    local toolToEquip = toolRef
+    if not toolToEquip or not toolToEquip.Parent then
+        if toolName then
+            toolToEquip = bp:FindFirstChild(toolName)
+        end
+    end
+    
+    if toolToEquip then
+        if toolToEquip.Parent ~= bp then
+            toolToEquip.Parent = bp
+            task.wait(LASER_ACTION_WAIT)
+        end
+        hum:EquipTool(toolToEquip)
+    end
+end
+
+local function equipLaserCape()
+    local hum = getHumanoid()
+    local bp = player:FindFirstChild('Backpack')
+    if not (hum and bp) then
+        return false
+    end
+    
+    local cape = bp:FindFirstChild(LASER_CAPE_NAME)
+    if not cape then
+        return false
+    end
+    
+    if cape.Parent ~= bp then
+        cape.Parent = bp
+        task.wait(LASER_ACTION_WAIT)
+    end
+    hum:EquipTool(cape)
+    return true
+end
+
+local function unequipAllTools()
+    local hum = getHumanoid()
+    if not hum then
+        return
+    end
+    hum:UnequipTools()
+    while player.Character and player.Character:FindFirstChildOfClass('Tool') do
+        task.wait()
+    end
+end
+
+local function getClosestPlayerUpperTorso()
+    local myChar = player.Character
+    local myHRP = myChar and myChar:FindFirstChild('HumanoidRootPart')
+    if not myHRP then
+        return nil, nil
+    end
+    
+    local closestPlr, closestPart, closestDist = nil, nil, LASER_MAX_DISTANCE
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character.PrimaryPart then
+            local hum = plr.Character:FindFirstChildOfClass('Humanoid')
+            local torso = plr.Character:FindFirstChild('UpperTorso')
+            if hum and hum.Health > 0 and torso then
+                local dist = (myHRP.Position - plr.Character.PrimaryPart.Position).Magnitude
+                if dist < closestDist then
+                    closestPlr, closestPart, closestDist = plr, torso, dist
+                end
+            end
+        end
+    end
+    return closestPlr, closestPart
+end
+
+local function doLaserCycle()
+    if laserIsBusy then
+        return
+    end
+    laserIsBusy = true
+    
+    local hum = getHumanoid()
+    local bp = player:FindFirstChild('Backpack')
+    if not (hum and bp) then
+        laserIsBusy = false
+        return
+    end
+    
+    local previousTool = getEquippedNonCapeTool()
+    local previousToolName = previousTool and previousTool.Name or nil
+    
+    unequipAllTools()
+    task.wait(LASER_ACTION_WAIT)
+    
+    if not equipLaserCape() then
+        laserIsBusy = false
+        return
+    end
+    task.wait(LASER_ACTION_WAIT)
+    
+    local remote = ReplicatedStorage:FindFirstChild('Packages')
+        and ReplicatedStorage.Packages:FindFirstChild('Net')
+        and ReplicatedStorage.Packages.Net:FindFirstChild('RE/UseItem')
+    
+    local targetPlr, targetPart = getClosestPlayerUpperTorso()
+    if remote and targetPart then
+        remote:FireServer(targetPart.Position, targetPart)
+        task.wait(LASER_POST_SHOT_DELAY)
+    end
+    
+    unequipAllTools()
+    task.wait(LASER_ACTION_WAIT)
+    
+    reEquipPreviousTool(previousTool, previousToolName)
+    
+    task.wait(LASER_SHOOT_INTERVAL)
+    laserIsBusy = false
+end
+
+local function startAutoLaser()
+    if laserRunning then
+        return
+    end
+    laserRunning = true
+    
+    laserLoopThread = task.spawn(function()
+        while laserRunning do
+            pcall(doLaserCycle)
+            task.wait()
+        end
+    end)
+end
+
+local function stopAutoLaser()
+    laserRunning = false
+    laserIsBusy = false
+    
+    if laserLoopThread then
+        task.cancel(laserLoopThread)
+        laserLoopThread = nil
+    end
+end
+
+----------------------------------------------------------------
 -- AIMBOT TEIA
 ----------------------------------------------------------------
 local WEBSLINGER_NAME = 'Web Slinger'
@@ -828,10 +1001,8 @@ makeRuntimeToggle(
     end
 )
 
--- AUTO LASER e X-RAY state
-local autoLaserActive = false
+-- X-RAY state
 local xRayActive = false
-local autoLaserConn
 local xRayConn
 
 local autoLaserY = espPlayerY + 28 + 6
@@ -852,39 +1023,12 @@ makePersistToggle(
     Color3.fromRGB(220, 0, 60),
     'AUTO LASER',
     function(on)
-        autoLaserActive = on
         if on then
-            if autoLaserConn then
-                autoLaserConn:Disconnect()
-            end
-            autoLaserConn = RunService.Heartbeat:Connect(function()
-                local char = player.Character
-                if not char then return end
-                local hrp = char:FindFirstChild('HumanoidRootPart')
-                if not hrp then return end
-                
-                for _, obj in ipairs(Workspace:GetDescendants()) do
-                    if obj:IsA('ProximityPrompt') and obj.Enabled then
-                        local action = (obj.ActionText or ''):lower()
-                        if action:find('laser') or action:find('collect') then
-                            local parent = obj.Parent
-                            if parent and parent:IsA('BasePart') then
-                                local dist = (parent.Position - hrp.Position).Magnitude
-                                if dist <= obj.MaxActivationDistance then
-                                    pcall(function()
-                                        fireproximityprompt(obj)
-                                    end)
-                                end
-                            end
-                        end
-                    end
-                end
-            end)
+            startAutoLaser()
+            showStatus('Auto Laser ATIVADO', Color3.fromRGB(60, 255, 60))
         else
-            if autoLaserConn then
-                autoLaserConn:Disconnect()
-                autoLaserConn = nil
-            end
+            stopAutoLaser()
+            showStatus('Auto Laser DESATIVADO')
         end
     end
 )
@@ -993,34 +1137,8 @@ end
 
 -- Initialize AUTO LASER and X-RAY from saved config
 if initialAutoLaser then
-    task.defer(function()
-        autoLaserActive = true
-        if autoLaserConn then
-            autoLaserConn:Disconnect()
-        end
-        autoLaserConn = RunService.Heartbeat:Connect(function()
-            local char = player.Character
-            if not char then return end
-            local hrp = char:FindFirstChild('HumanoidRootPart')
-            if not hrp then return end
-            
-            for _, obj in ipairs(Workspace:GetDescendants()) do
-                if obj:IsA('ProximityPrompt') and obj.Enabled then
-                    local action = (obj.ActionText or ''):lower()
-                    if action:find('laser') or action:find('collect') then
-                        local parent = obj.Parent
-                        if parent and parent:IsA('BasePart') then
-                            local dist = (parent.Position - hrp.Position).Magnitude
-                            if dist <= obj.MaxActivationDistance then
-                                pcall(function()
-                                    fireproximityprompt(obj)
-                                end)
-                            end
-                        end
-                    end
-                end
-            end
-        end)
+    task.delay(1, function()
+        startAutoLaser()
     end)
 end
 
@@ -2144,6 +2262,10 @@ player.CharacterAdded:Connect(function()
     task.wait(0.1)
     stealFloorDisable(nil)
     goToBestDisable()
+end)
+
+player.CharacterRemoving:Connect(function(ch)
+    stopAutoLaser()
 end)
 
 -- Botão FLY TO BASE (mantido no mesmo lugar)
